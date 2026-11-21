@@ -1,0 +1,82 @@
+name: Build Project Burnin
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: false   # no code signing
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            cmd: npx electron-builder --win portable --publish never
+          - os: ubuntu-latest
+            name: linux
+            cmd: npx electron-builder --linux deb tar.gz --publish never
+          - os: macos-latest
+            name: macos-apple-silicon
+            cmd: npx electron-builder --mac zip dmg --arm64 --publish never
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fails early with a clear message if the upload to GitHub was incomplete
+      - name: Check project files
+        shell: bash
+        run: |
+          missing=0
+          for f in package.json index.html vite.config.js electron/main.js src/main.jsx src/App.jsx public/icon.webp script/icon.ico script/icon.png script/icon.icns; do
+            if [ ! -f "$f" ]; then echo "MISSING: $f"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Some project files were not uploaded to GitHub. Upload the missing files and run again."
+            exit 1
+          fi
+          echo "All required files are present."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build UI
+        run: npm run build
+
+      - name: Package app
+        run: ${{ matrix.cmd }}
+
+      - name: List output
+        shell: bash
+        run: ls -la release || true
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-burnin-${{ matrix.name }}
+          path: |
+            release/*.exe
+            release/*.deb
+            release/*.tar.gz
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 30
